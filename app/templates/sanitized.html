@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>脱敏结果 - {{ s.filename }}</title>
+<style>
+  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.1rem}
+  table{border-collapse:collapse;width:100%;font-size:.92rem;margin:.5rem 0}
+  th,td{border:1px solid #ddd;padding:.4rem .55rem;text-align:left;vertical-align:top}
+  th{background:#f7f7f9}
+  .card{border:1px solid #ddd;border-radius:8px;padding:1rem 1.25rem;margin:1rem 0}
+  .ok{background:#e9f7ef;border:1px solid #b7e0c6;padding:.6rem .9rem;border-radius:6px}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;word-break:break-all}
+  .muted{color:#666}
+  button{background:#0b5fff;color:#fff;border:0;border-radius:6px;padding:.5rem 1.1rem;font-size:1rem;cursor:pointer}
+  code{background:#f4f4f4;padding:.1rem .3rem;border-radius:4px}
+</style>
+</head>
+<body>
+<p><a href="/">← 返回上传页</a></p>
+<h1>抓包脱敏完成</h1>
+<div class="ok">
+  已按列 <strong><code>{{ s.column }}</code></strong> 遮盖全部 <code>POST /reports</code> 投递，
+  生成可外发的新抓包。原件与原 CSV 下载入口不受影响。
+</div>
+<div class="card">
+  <p>原文件：<strong>{{ s.filename }}</strong>（{{ s.size }} 字节） · 遮盖列 <span class="mono">{{ s.column }}</span></p>
+  <p>总包数 {{ s.packet_count }}，其中重写 {{ s.rewritten_packets|length }} 包（分段、重传与一致重叠的全部副本）：
+     <span class="mono">#{{ s.rewritten_packets | join('、#') }}</span></p>
+  {% if s.masked_bytes == 0 %}
+  <p class="muted" style="color:#b26a00;font-weight:600">提示：列 <code>{{ s.column }}</code> 在所有投递中均为空值，未替换任何字节，输出 pcap 与原件逐包一致。</p>
+  {% endif %}
+  <p class="muted">包序、时间戳、每包长度、TCP SEQ/ACK、响应报文与双向校验和均保持有效；正文总长度不变；本次共遮盖 {{ s.masked_bytes }} 个字节。</p>
+  <p><a href="/sanitized/{{ s.id }}"><button type="button">下载脱敏后的 pcap</button></a>
+     <span class="mono muted">GET /sanitized/{{ s.id }}</span></p>
+</div>
+<div class="card">
+  <h2>投递核对（重新上传后应得到相同投递数与回执）</h2>
+  <table>
+    <tr><th>#</th><th>目标</th><th>原 CSV 字节</th><th>遮盖后字节</th><th>等长</th><th>中间响应</th><th>最终状态</th></tr>
+    {% for d in s.deliveries %}
+    <tr>
+      <td>{{ d.index }}</td>
+      <td class="mono">{{ d.target }}</td>
+      <td>{{ d.body_len }}</td>
+      <td>{{ d.masked_len }}</td>
+      <td>{{ '是' if d.body_len == d.masked_len else '否' }}</td>
+      <td>{{ d.interims | join(', ') if d.interims else '—' }}</td>
+      <td>{{ d.final_status if d.final_status is not none else '未知' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="muted">提示：把下载到的脱敏 pcap 回到上传页做「还原分析」，投递数与最终状态应与本页一致，
+    下载到的 CSV 中 <code>{{ s.column }}</code> 列只含 <code>*</code>。</p>
+</div>
+</body>
+</html>

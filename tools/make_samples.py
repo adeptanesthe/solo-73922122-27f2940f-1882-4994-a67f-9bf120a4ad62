@@ -32,6 +32,15 @@ CSV_TRUNC_HALF = csv_rows("T200", 20)  # truncated 连接2（请求截断）
 CSV_GAP = csv_rows("G100", 10)        # anomaly 流内缺口
 CSV_CONFLICT = csv_rows("X100", 10)   # anomaly 重叠字节冲突
 
+# 脱敏演示：含引号转义、引号内换行、逗号与多字节 UTF-8；遮盖列为 sample_id
+CSV_MASK_DEMO = (
+    "sample_id,site,analyte,note,result\n"
+    "S-001,北京-01,Pb,\"含,逗号\",0.002\n"
+    "S-002,\"站点\"\"X\"\"\",Cd,\"引号内换行\n第二行\",0.005\n"
+    "S-003,上海,Hg,普通备注,0.009\n"
+).encode("utf-8")
+MASK_COLUMN = "sample_id"
+
 
 def build_normal() -> bytes:
     b = PcapBuilder()
@@ -126,6 +135,39 @@ def build_anomaly() -> bytes:
     return b.build()
 
 
+def build_mask_demo() -> bytes:
+    """脱敏演示：单连接完整握手；POST /reports 分段跨包，含跨包重传与一致重叠。
+
+    遮盖列 sample_id 的字段字节跨越多个 TCP 段边界，且：
+    - 第二段整段重传（含其承载的 sample_id 字节）；
+    - 一致重叠段覆盖第一段尾部与第二段全部；末段另有一次整段重传；
+    - 响应侧 100 Continue 与 200 OK 均有重传，响应须原样保留。
+    """
+    b = PcapBuilder()
+    f = Flow(b, 1.000, "10.0.0.21", 40010, SIP, DPORT, isn_c=80_000, isn_s=88_000)
+    req = http_request(CSV_MASK_DEMO)
+    c0 = f.cseq
+    p1, p2, p3 = req[:90], req[90:200], req[200:]
+    cont = b"HTTP/1.1 100 Continue\r\n\r\n"
+    s0 = f.sseq
+    f.ssend(1.010, cont)
+    f.ssend(1.011, cont, seq=s0)                  # 100 重传（同 seq/ack，字节一致）
+    f.csend(1.020, p1, seq=c0)
+    f.csend(1.035, p3, seq=c0 + 200)                 # 乱序：末段先到
+    f.csend(1.040, p2, seq=c0 + 90)
+    f.csend(1.050, p2, seq=c0 + 90)                  # 整段重传（分段副本）
+    f.csend(1.060, p1[60:] + p2, seq=c0 + 60)        # 一致重叠重传（覆盖 p1 尾 + p2 全部）
+    f.csend(1.062, p3, seq=c0 + 200)                 # 末段重传（同样承载遮盖列字节）
+    f.cseq = c0 + len(req)
+    resp = http_response(200, "OK", b"accepted\n")
+    r0 = f.sseq
+    f.ssend(1.070, resp)
+    f.ssend(1.080, resp, seq=r0)                     # 最终响应整段重传（同 seq/ack）
+    b.tcp(1.090, "10.0.0.21", 40010, SIP, DPORT, f.cseq, f.sseq, FIN | ACK)
+    b.tcp(1.095, SIP, DPORT, "10.0.0.21", 40010, f.sseq, f.cseq + 1, FIN | ACK)
+    return b.build()
+
+
 def main() -> None:
     OUT.mkdir(exist_ok=True)
     for name, builder in [
@@ -133,6 +175,7 @@ def main() -> None:
         ("retrans.pcap", build_retrans),
         ("truncated.pcap", build_truncated),
         ("anomaly.pcap", build_anomaly),
+        ("mask-demo.pcap", build_mask_demo),
     ]:
         data = builder()
         (OUT / name).write_bytes(data)

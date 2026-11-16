@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .pcap_ingest import Analysis, PcapError, analyze_pcap
+from .pcap_sanitize import SanitizeError, SanitizeResult, sanitize_pcap
 
 MAX_BYTES = 10 * 1024 * 1024  # 10 MiB 上传上限
 
@@ -21,8 +22,9 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 if SAMPLES.is_dir():
     app.mount("/samples", StaticFiles(directory=str(SAMPLES)), name="samples")
 
-# 分析结果保存在内存中（单进程演示用途，重启即失效）
+# 分析 / 脱敏结果保存在内存中（单进程演示用途，重启即失效）
 ANALYSES: dict[str, Analysis] = {}
+SANITIZATIONS: dict[str, SanitizeResult] = {}
 
 
 def _index_ctx(request: Request, error: str | None = None) -> dict:
@@ -73,6 +75,83 @@ async def api_analyze(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(exc))
     ANALYSES[result.id] = result
     return _analysis_json(result)
+
+
+# ---------------- 抓包脱敏（CSV 列遮盖） ----------------
+
+@app.post("/sanitize", response_class=HTMLResponse)
+async def sanitize(request: Request, file: UploadFile = File(...), column: str = Form(...)):
+    data = await file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        return templates.TemplateResponse(
+            request=request, name="index.html",
+            context=_index_ctx(request, "文件超过 10 MiB 上限"), status_code=413)
+    try:
+        result = sanitize_pcap(data, column, file.filename or "upload.pcap")
+    except SanitizeError as exc:
+        return templates.TemplateResponse(
+            request=request, name="index.html",
+            context=_index_ctx(request, f"脱敏被拒绝：{exc}"), status_code=400)
+    SANITIZATIONS[result.id] = result
+    return templates.TemplateResponse(request=request, name="sanitized.html",
+                                      context={"request": request, "s": result})
+
+
+@app.post("/api/sanitize")
+async def api_sanitize(file: UploadFile = File(...), column: str = Form(...)):
+    data = await file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="文件超过 10 MiB 上限")
+    try:
+        result = sanitize_pcap(data, column, file.filename or "upload.pcap")
+    except SanitizeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    SANITIZATIONS[result.id] = result
+    return _sanitize_json(result)
+
+
+@app.get("/sanitized/{sanitization_id}")
+async def download_sanitized(sanitization_id: str):
+    s = SANITIZATIONS.get(sanitization_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="脱敏结果不存在或已过期（结果仅存于内存）")
+    stem = Path(s.filename).stem or "upload"
+    fname = f"{stem}.masked-{s.column}.pcap"
+    return Response(
+        content=s.output,
+        media_type="application/vnd.tcpdump.pcap",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+def _sanitize_json(s: SanitizeResult) -> dict:
+    return {
+        "id": s.id,
+        "filename": s.filename,
+        "column": s.column,
+        "size": s.size,
+        "output_size": len(s.output),
+        "packet_count": s.packet_count,
+        "rewritten_packets": s.rewritten_packets,
+        "rewritten_count": len(s.rewritten_packets),
+        "isn_client": s.isn_client,
+        "isn_server": s.isn_server,
+        "masked_bytes": s.masked_bytes,
+        "all_target_values_empty": s.masked_bytes == 0,
+        "deliveries": [
+            {
+                "index": d.index,
+                "target": d.target,
+                "body_len": d.body_len,
+                "masked_len": d.masked_len,
+                "length_preserved": d.body_len == d.masked_len,
+                "interims": d.interims,
+                "final_status": d.final_status,
+            }
+            for d in s.deliveries
+        ],
+        "download_url": f"/sanitized/{s.id}",
+    }
 
 
 @app.get("/download/{analysis_id}/{conn_index}/{delivery_index}")

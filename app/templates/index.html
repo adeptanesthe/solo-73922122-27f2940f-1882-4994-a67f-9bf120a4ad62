@@ -17,9 +17,23 @@
 </head>
 <body>
 <h1>检测报告恢复核对台</h1>
-<p class="muted">实验室网关原件丢失后，从抓包还原 <code>POST /reports</code> 的 CSV 投递，核对最终回执，判断是否需要补采。</p>
+<p class="muted">实验室网关原件丢失后，从抓包还原 <code>POST /reports</code> 的 CSV 投递，核对最终回执，判断是否需要补采；
+另提供抓包脱敏页，遮盖 CSV 指定列后生成可外发的新抓包。</p>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
 <div class="card">
+  <h2>抓包脱敏（CSV 列遮盖）</h2>
+  <form action="/sanitize" method="post" enctype="multipart/form-data">
+    <p><input type="file" name="file" accept=".pcap" required>
+       列名：<input type="text" name="column" placeholder="如 sample_id" required></p>
+    <p><button type="submit">上传并生成脱敏抓包</button></p>
+  </form>
+  <p class="muted">仅受理单条完整握手连接、双向 HTTP 报文完整且流无缺口冲突的抓包；每份
+    <code>POST /reports</code> 的 UTF-8 逗号 CSV 按指定列遮盖：保留表头与其他字段，
+    目标字段逐字节替换为 <code>*</code>（保留字段原始字节长度，支持双引号转义与引号内换行）。
+    CSV 非法、列名不唯一或缺列则整份拒绝。包序、时间戳、包长、SEQ/ACK、响应与校验和保持有效。</p>
+</div>
+<div class="card">
+  <h2>还原分析（原件下载）</h2>
   <form action="/analyze" method="post" enctype="multipart/form-data">
     <p><input type="file" name="file" accept=".pcap" required></p>
     <p><button type="submit">上传并分析</button></p>
@@ -30,6 +44,7 @@
 <div class="card">
   <h2>样本抓包（可下载后重新上传试用）</h2>
   <ul>
+    <li><a href="/samples/mask-demo.pcap">mask-demo.pcap</a> — 脱敏演示：跨包重传、一致重叠、乱序、100 Continue 与响应重传（遮盖列 <code>sample_id</code>）</li>
     <li><a href="/samples/normal.pcap">normal.pcap</a> — 正常流量：连接复用、流水线、100 Continue、同文重复投递</li>
     <li><a href="/samples/retrans.pcap">retrans.pcap</a> — 乱序到达与 TCP 重传、同四元组重新握手</li>
     <li><a href="/samples/truncated.pcap">truncated.pcap</a> — 截断捕获：响应未完整 / 请求未完整</li>
