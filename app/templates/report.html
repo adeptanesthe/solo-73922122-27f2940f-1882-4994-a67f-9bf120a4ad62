@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分析结果 - {{ a.filename }}</title>
+<style>
+  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.1rem}
+  table{border-collapse:collapse;width:100%;font-size:.92rem;margin:.5rem 0}
+  th,td{border:1px solid #ddd;padding:.4rem .55rem;text-align:left;vertical-align:top}
+  th{background:#f7f7f9}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;word-break:break-all}
+  .badge{display:inline-block;border-radius:10px;padding:.1rem .6rem;font-size:.8rem;color:#fff;vertical-align:middle}
+  .ok{background:#1a9e54}.review{background:#d08700}
+  .conn{border:1px solid #ddd;border-radius:8px;padding:1rem 1.25rem;margin:1.2rem 0}
+  .warn{background:#fff8e6;border:1px solid #f0dfa8;padding:.5rem .8rem;border-radius:6px}
+  .muted{color:#666}.unknown{color:#b26a00;font-weight:600}
+  ul{margin:.3rem 0}
+</style>
+</head>
+<body>
+<p><a href="/">← 返回上传页</a></p>
+<h1>分析结果</h1>
+<div class="conn">
+  <p>文件：<strong>{{ a.filename }}</strong>（{{ a.size }} 字节） · 分析编号 <span class="mono">{{ a.id }}</span></p>
+  <table>
+    <tr><th>总包数</th><th>TCP 包</th><th>非 IPv4</th><th>IP 分片（已跳过）</th><th>非 TCP</th><th>无连接孤儿包</th><th>未完整握手连接（已跳过）</th></tr>
+    <tr>
+      <td>{{ a.stats.total }}</td><td>{{ a.stats.tcp }}</td><td>{{ a.stats.non_ipv4 }}</td>
+      <td>{{ a.stats.fragmented }}</td><td>{{ a.stats.non_tcp }}</td><td>{{ a.stats.orphan }}</td>
+      <td>{{ a.skipped_incomplete_handshake }}</td>
+    </tr>
+  </table>
+</div>
+
+{% for c in a.connections %}
+<div class="conn">
+  <h2>连接 #{{ c.index }} <span class="mono">{{ c.client }} → {{ c.server }}</span>
+    {% if c.state == 'ok' %}<span class="badge ok">正常</span>{% else %}<span class="badge review">待核</span>{% endif %}
+  </h2>
+  <p class="muted">客户端→服务器 {{ c.cli_bytes }} 字节 · 服务器→客户端 {{ c.srv_bytes }} 字节</p>
+  {% if c.reasons %}<ul>{% for r in c.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+  {% if c.state == 'review' %}<p class="warn">该连接存在缺口或字节冲突，整连接待核，不开放原件下载。</p>{% endif %}
+  {% if c.notes %}<ul class="muted">{% for n in c.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+  {% if c.deliveries %}
+  <table>
+    <tr><th>#</th><th>方法</th><th>目标</th><th>类型</th><th>正文字节</th><th>正文 SHA-256</th><th>中间响应</th><th>最终状态</th><th>原件</th></tr>
+    {% for d in c.deliveries %}
+    <tr>
+      <td>{{ d.index }}</td>
+      <td>{{ d.method }}</td>
+      <td class="mono">{{ d.target }}</td>
+      <td>{{ '投递' if d.is_delivery else '非投递' }}</td>
+      <td>{% if d.req_complete %}{{ d.body_len }}{% else %}<span class="unknown">不完整</span>{% endif %}</td>
+      <td class="mono">{{ d.sha256 if d.sha256 else '—' }}</td>
+      <td>{{ d.interims | join(', ') if d.interims else '—' }}</td>
+      <td>{% if d.final_status is not none %}{{ d.final_status }}{% else %}<span class="unknown">未知</span>{% endif %}</td>
+      <td>{% if d.downloadable %}<a href="/download/{{ a.id }}/{{ c.index }}/{{ d.index }}">下载 CSV</a>{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">无解析出的报文。</p>
+  {% endif %}
+</div>
+{% else %}
+<p>没有可分析的连接（需完整三次握手）。</p>
+{% endfor %}
+</body>
+</html>

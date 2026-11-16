@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>检测报告恢复核对台</title>
+<style>
+  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem}
+  .card{border:1px solid #ddd;border-radius:8px;padding:1rem 1.25rem;margin:1rem 0}
+  .err{background:#fdecea;border:1px solid #f5c6c0;color:#a33;padding:.6rem .9rem;border-radius:6px}
+  .muted{color:#666;font-size:.9rem}
+  button{background:#0b5fff;color:#fff;border:0;border-radius:6px;padding:.5rem 1.1rem;font-size:1rem;cursor:pointer}
+  code{background:#f4f4f4;padding:.1rem .3rem;border-radius:4px}
+  ul{line-height:1.8}
+</style>
+</head>
+<body>
+<h1>检测报告恢复核对台</h1>
+<p class="muted">实验室网关原件丢失后，从抓包还原 <code>POST /reports</code> 的 CSV 投递，核对最终回执，判断是否需要补采。</p>
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+<div class="card">
+  <form action="/analyze" method="post" enctype="multipart/form-data">
+    <p><input type="file" name="file" accept=".pcap" required></p>
+    <p><button type="submit">上传并分析</button></p>
+  </form>
+  <p class="muted">约束：pcap ≤ {{ max_mib }} MiB；Ethernet / IPv4 / TCP；无 IP 分片；完整三次握手；明文 HTTP/1.1；请求与最终响应均以 Content-Length 定界。</p>
+</div>
+{% if samples_ready %}
+<div class="card">
+  <h2>样本抓包（可下载后重新上传试用）</h2>
+  <ul>
+    <li><a href="/samples/normal.pcap">normal.pcap</a> — 正常流量：连接复用、流水线、100 Continue、同文重复投递</li>
+    <li><a href="/samples/retrans.pcap">retrans.pcap</a> — 乱序到达与 TCP 重传、同四元组重新握手</li>
+    <li><a href="/samples/truncated.pcap">truncated.pcap</a> — 截断捕获：响应未完整 / 请求未完整</li>
+    <li><a href="/samples/anomaly.pcap">anomaly.pcap</a> — 流内缺口与重叠字节冲突（整连接待核）</li>
+  </ul>
+</div>
+{% endif %}
+</body>
+</html>
